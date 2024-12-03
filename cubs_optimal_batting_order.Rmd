@@ -1,0 +1,159 @@
+---
+title: "2023 cubs optimal batting order"
+author: "Daniel O'Hear"
+date: "2023-12-04"
+output: html_document
+---
+```{r}
+
+```
+
+```{r}
+library(data.table)
+library(Matrix)
+
+# Function to create the player matrix
+player_matrix <- function(homeruns, triples, doubles, singles, walks, outs, plate_appearances) {
+  h <- homeruns / plate_appearances
+  t <- triples / plate_appearances
+  d <- doubles / plate_appearances
+  s <- singles / plate_appearances
+  w <- walks / plate_appearances
+  o <- outs / plate_appearances
+
+  # B = fundamental block matrix: represents possible transitions between states that do not result in an out
+  B <- matrix(c(h, w + s, d, t, 0, 0, 0, 0,
+                h, 0, d / 2, t, w + (s / 2), s / 2, d / 2, 0,
+                h, s / 2, d, t, w, s / 2, 0, 0,
+                h, s, d, t, 0, w, 0, 0,
+                h, 0, d / 2, t, s / 6, s / 3, d / 2, w + (s / 2),
+                h, 0, d / 2, t, s / 2, s / 2, d / 2, w,
+                h, s / 2, d, t, 0, s / 2, 0, w,
+                h, 0, d / 2, t, s / 2, s / 2, d / 2, w), nrow = 8, byrow = TRUE)
+
+  # I = 8x8 outs identity matrix, transitions back to the same inning and base runner dist. state
+  # with one more out when out occurs that is not the 3rd out
+  I <- diag(rep(o, 8))
+
+  # V = 8x1 outs column vector, transitions back to the next inning's zero out no base runner state,
+  # after the 3rd out
+  V <- matrix(rep(o, 8), nrow = 8)
+
+  # T = 217x217 transition matrix, for each player
+  tb <- bdiag(list(B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, 0))
+  v8 <- cbind(V, matrix(0, nrow = 8, ncol = 7))
+  v9 <- rbind(V, matrix(1, nrow = 1))
+
+  offset <- 8
+  aux <- matrix(, nrow = 0, ncol = offset)
+  ti <- bdiag(aux, I, I, v8, I, I, v8, I, I, v8, I, I, v8, I, I, v8, I, I, v8, I, I, v8, I, I, v8, I, I, v9)
+
+  T <- tb + ti
+
+  return(T)
+}
+
+# Function to create the game matrix
+game_matrix <- function() {
+  # Hardcoded data for a single game
+  data <- data.frame(
+    homeruns =          c(10,  8,   9,    22,  2,   21,  26,  20, 26),
+    triples =           c(2,   0,   4,    3,   1,   4,   1,   6,   3),
+    doubles =           c(20,  18,  27,   25,  16,  35,  29,  31,  17),
+    singles =           c(70,  169, 135,  88,  47,  79,  88,  90,  50),
+    walks =             c(21,  59,  49,   66,  10,  99,  40,  59,  36),
+    outs =              c(81,  86,  83,   154, 24,  153, 87,  130, 133),
+    plate_appearances = c(419, 401, 688,  638, 294, 691, 556, 583, 429)
+  )
+
+  game_T_matrix <- lapply(1:nrow(data), function(i) {
+    player_matrix(data[i, "homeruns"], data[i, "triples"], data[i, "doubles"],
+                  data[i, "singles"], data[i, "walks"], data[i, "outs"], data[i, "plate_appearances"])
+  })
+
+  return(game_T_matrix)
+}
+
+# Function to create the run value matrix
+run_value_matrix <- function() {
+  # N = 8x8 runs matrix, the # of runs that score between all possible transitions that do not
+  # result in an out being recorded, for 1 half-inning of baseball
+  N <- matrix(c(1, 0, 0, 0, 0, 0, 0, 0,
+                2, 1, 1, 1, 0, 0, 0, 0,
+                2, 1, 1, 1, 0, 0, 0, 0,
+                2, 1, 1, 1, 0, 0, 0, 0,
+                3, 2, 2, 2, 1, 1, 1, 0,
+                3, 2, 2, 2, 1, 1, 1, 0,
+                3, 2, 2, 2, 1, 1, 1, 0,
+                4, 3, 3, 3, 2, 2, 2, 1), nrow = 8, byrow = TRUE)
+
+  # R = 217x217 run value matrix, keeps track of # of runs scored throughout the whole baseball game
+  R <- bdiag(list(N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, 0))
+  return(R)
+}
+
+# Function to create the initial state vector
+current_state <- function() {
+  # C = Current state vector, keeps track of the probability that the game is in any given state,
+  # and used to determine when the game is over, C[1, 217] > 0.99
+  C <- matrix(0, nrow = 1, ncol = 217)
+  C[1, 1] <- 1
+  return(C)
+}
+
+# Function to simulate the baseball game
+play_ball <- function(lineup, C, R, game_T_matrix, max_iterations = 10000) {
+  total_runs <- 0
+  hitter <- 1
+  iterations <- 0
+
+  while (C[1, 217] < 0.99 && iterations < max_iterations) {
+    i <- lineup[hitter]
+    T <- game_T_matrix[[i]]
+
+    runs <- C %*% R %*% T
+    total_runs <- total_runs + sum(runs)
+
+    C <- C %*% T
+
+    hitter <- hitter + 1
+    if (hitter > 9) {
+      hitter <- 1
+    }
+
+    iterations <- iterations + 1
+  }
+
+  return(total_runs)
+}
+
+
+lineup_card <- function(lineup) {
+  # Hardcoded player data for lineup card using data.table
+  player_data <- data.table(
+    order = c(2, 3, 6, 8, 4, 9, 7, 1, 5),
+    player_name = c("YanGomes", "MikeTauchman", "NicoHoerner", "DansbySwanson", "NickMadrigal", "IanHapp", "CodyBelinger", "SeiyaSuzuki", "ChristopherMorel"),
+    position = c("C", "CF", "2B", "SS", "3B", "LF", "1B", "RF", "DH")
+  )
+
+  lineup_card_dt <- player_data[order %in% lineup]
+  print(lineup_card_dt)
+  return(lineup_card_dt)
+}
+
+# Hardcoded data for a single game
+C <- current_state()
+R <- run_value_matrix()
+lineup <- c(2, 3, 6, 8, 4, 9, 7, 1, 5)
+game_T_matrix <- game_matrix()
+
+# Display the lineup card
+cat("\nThe following batting order...\n")
+lineup_card_dt <- lineup_card(lineup)
+
+# Run the simulation with the hardcoded data
+expected_runs <- play_ball(lineup, C, R, game_T_matrix)
+
+cat("\nWill produce", expected_runs, "expected runs per game!\n") 
+
+```
