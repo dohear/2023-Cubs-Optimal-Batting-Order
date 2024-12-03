@@ -1,5 +1,5 @@
 ---
-title: "2023 cubs optimal batting order"
+title: "2023 Cubs Optimal Batting Order"
 author: "Daniel O'Hear"
 date: "2023-12-04"
 output: html_document
